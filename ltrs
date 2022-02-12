@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.3"
+local version = "v0.4"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -70,6 +70,16 @@ local function exec(task, name)
     return true, suc
 end
 
+local function rsConfBackupEnding(s)
+    local ending = "\t.\n"
+
+    if string.find(s, "\t") ~= nil then
+        ending = "\n"
+    end
+
+    return ending
+end
+
 --===== pre execution =====--
 if lfs.attributes(tmpConfPath) == nil then
     exec("mkdir -p " .. tmpConfPath)
@@ -106,12 +116,12 @@ for _, taskName in ipairs(args.tasks) do
         tmpRsConf = tmpRsConf .. "snapshot_root\t" .. task.snapshotPath .. "\nretain\t" .. taskName .. "\t" .. amount .. "\n"
 
         if task.remotePath ~= nil then
-            tmpRsConf = tmpRsConf ..  "backup\t" .. task.remotePath .. "\t.\n"
+            tmpRsConf = tmpRsConf ..  "backup\t" .. task.remotePath .. rsConfBackupEnding(task.remotePath)
         end
 
         if lfs.attributes(task.remotePathList or "") ~= nil then
             for line in io.lines(task.remotePathList) do
-                tmpRsConf = tmpRsConf .. "backup\t" .. line .. "\t.\n"
+                tmpRsConf = tmpRsConf .. "backup\t" .. line .. rsConfBackupEnding(line)
             end
         end
 
