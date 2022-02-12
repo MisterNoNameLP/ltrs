@@ -1,0 +1,123 @@
+#!/bin/lua
+local version = "v0.2"
+
+--===== load libs =====--
+package.path = "libs/?.lua;" .. package.path
+
+local lip = require("LIP")
+local ut = require("UT")
+local argparse = require("argparse")
+local lfs = require("lfs")
+
+local conf = lip.load("ltrs.ini")
+
+--===== parse args =====--
+local args
+do
+    local parser = argparse("ltrs", "LifeTimedRSnapshot")
+    
+    parser:argument("tasks", "Tasks to do"):args("*"):target("tasks")
+    
+    parser:flag("-v --version", "Shows the ltrs version and exit."):action(function() 
+        print("ltrs: " .. version)
+        os.exit(0)
+    end)
+
+    parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
+    parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
+
+    args = parser:parse()
+end
+
+--===== load configs =====--
+local tmpConfPath = "./tmp/"
+
+local rsnapshotConf
+local conf 
+
+if lfs.attributes(args.rsConfFile) == nil then
+    io.stderr:write("[FATAL]: Cant find rsnapshot config file\n")
+    os.exit(1)
+else
+    rsnapshotConf = ut.readFile("rsnapshot.conf")
+end
+
+if lfs.attributes(args.confFile) == nil then
+    io.stderr:write("[FATAL]: Cant find ltrs config file\n")
+    os.exit(1)
+else
+    conf = lip.load(args.confFile)
+end
+
+-- debug
+--print(ut.tostring(args))
+--print(ut.tostring(conf))
+
+--do return true end
+
+--===== functions =====--
+local function exec(task, name)
+    local suc = select(3, os.execute(task))
+
+    name = ut.parseArgs(name, "exec")
+
+    if suc ~= 0 then
+        io.stderr:write("[ERROR]: " .. name .. ": returned an error: " .. tostring(suc) .. "\n")
+        
+        return false, suc
+    end
+
+    return true, suc
+end
+
+--===== start script =====--
+for _, taskName in ipairs(args.tasks) do
+    if conf[taskName] ~= nil then
+        local task = conf[taskName]
+        local tmpRsConf = rsnapshotConf
+        local tmpRsConfFile = io.open(tmpConfPath .. taskName, "w")
+        local amount = task.amount
+
+        if tostring(amount) == "-1" then 
+            amount = 0
+            for fileName in lfs.dir(task.snapshotPath) do
+                local ending
+                for s in string.gmatch(fileName, "[^.]+") do
+                    ending = s
+                end
+
+                if ending ~= nil and string.sub(fileName, 0, -(string.len(ending) +2)) == taskName then
+                    if tonumber(ending) > amount then
+                        amount = tonumber(ending)
+                    end
+                end
+            end
+            amount = amount +2
+        end
+
+        tmpRsConf = tmpRsConf .. "snapshot_root\t" .. task.snapshotPath .. "\nretain\t" .. taskName .. "\t" .. amount .. "\n"
+
+        if task.remotePath ~= nil then
+            tmpRsConf = tmpRsConf ..  "backup\t" .. task.remotePath .. "\t.\n"
+        end
+
+        if lfs.attributes(task.remotePathList or "") ~= nil then
+            for line in io.lines(task.remotePathList) do
+                tmpRsConf = tmpRsConf .. "backup\t" .. line .. "\t.\n"
+            end
+        end
+
+        tmpRsConfFile:write(tmpRsConf)
+        tmpRsConfFile:close()
+
+        if exec("rsnapshot -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
+            exec("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifeTime .. " -exec rm -r {} \\;", "find")
+
+            exec("rm " .. tmpConfPath .. taskName, "rm")
+        end
+
+    else
+        io.stderr:write("[ERROR]: Cant find task \"" .. taskName .. "\" in \"" .. args.confFile .. "\"\n")
+    end
+end
+
