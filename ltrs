@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.2"
+local version = "v0.3"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -70,7 +70,12 @@ local function exec(task, name)
     return true, suc
 end
 
---===== start script =====--
+--===== pre execution =====--
+if lfs.attributes(tmpConfPath) == nil then
+    exec("mkdir -p " .. tmpConfPath)
+end
+
+--===== start executing tasks =====--
 for _, taskName in ipairs(args.tasks) do
     if conf[taskName] ~= nil then
         local task = conf[taskName]
@@ -80,6 +85,9 @@ for _, taskName in ipairs(args.tasks) do
 
         if tostring(amount) == "-1" then 
             amount = 0
+            if lfs.attributes(task.snapshotPath) == nil then
+                exec("mkdir -p " .. task.snapshotPath)
+            end
             for fileName in lfs.dir(task.snapshotPath) do
                 local ending
                 for s in string.gmatch(fileName, "[^.]+") do

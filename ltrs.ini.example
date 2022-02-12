@@ -1,0 +1,19 @@
+# example ltrs config file
+
+# task name
+[example]
+
+# remote path to make a snapshot from.
+remotePath=/FULL/REMOTE/PATH
+
+# path to a list file with remote pathts to make snapshots from.
+remotePathList=remote.list
+
+# the full path where to put the snapshots in.
+snapshotPath=/FULL/SNAPSHOT/PATH
+
+# the life time of the snapshots in days.
+lifeTime=99999
+
+# the maximum amount of snapshots to keep. -1 = infinit amount.
+amount=-1
