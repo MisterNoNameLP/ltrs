@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.5"
+local version = "v0.6"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -27,6 +27,7 @@ do
 
     parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
     parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
+    parser:option("-a --args", "Gives following args to rsnapshot."):target("rsArgs")
 
     args = parser:parse()
 end
@@ -205,7 +206,9 @@ if lfs.attributes(tmpConfPath) == nil then
 end
 
 --===== start executing tasks =====--
+local hasExecutetTasks = false
 for _, taskName in ipairs(args.tasks) do
+    hasExecutetTasks = true
     if getTask(taskName) ~= nil then
         local task = getTask(taskName)
         local tmpRsConfFile = io.open(tmpConfPath .. taskName, "w")
@@ -246,7 +249,7 @@ for _, taskName in ipairs(args.tasks) do
         tmpRsConfFile:write(tmpRsConf)
         tmpRsConfFile:close()
 
-        if exec("rsnapshot -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
+        if exec("rsnapshot " .. args.rsArgs .. " -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
             exec("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifeTime .. " -exec rm -r {} \\;", "find")
             
             if args.keepTmpRsConfFiles ~= true then
@@ -259,4 +262,6 @@ for _, taskName in ipairs(args.tasks) do
         io.stderr:write("[ERROR]: Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
     end
 end
-
+if not hasExecutetTasks and args.rsArgs ~= nil then
+    exec("rsnapshot " .. args.rsArgs)
+end
