@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.4"
+local version = "v0.5"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -22,6 +22,8 @@ do
         print("ltrs: " .. version)
         os.exit(0)
     end)
+
+    parser:flag("-k --keep", "Keep the auto generatet temporary rsnapshot conf files."):target("keepTmpRsConfFiles")
 
     parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
     parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
@@ -80,6 +82,123 @@ local function rsConfBackupEnding(s)
     return ending
 end
 
+local function getTask(taskName)
+    local task = conf[taskName]
+    if type(task) == "table" then
+        task.name = taskName
+    end
+    return task
+end
+
+local function getSnapshotAmount(task, allRetainsExisting, alternativePath)
+    local amount = task.amount
+    local path = task.snapshotPath
+
+    if alternativePath then
+        path = alternativePath
+    end
+
+    if tostring(amount) == "-1" then 
+        amount = 0
+        if lfs.attributes(path) == nil then
+            exec("mkdir -p " .. path)
+        end
+        for fileName in lfs.dir(path) do
+            local ending
+            for s in string.gmatch(fileName, "[^.]+") do
+                ending = s
+            end
+
+            if ending ~= nil and string.sub(fileName, 0, -(string.len(ending) +2)) == task.name then
+                if tonumber(ending) > amount then
+                    amount = tonumber(ending)
+                end
+            end
+        end
+
+        if allRetainsExisting then
+            amount = amount +1
+        else
+            amount = amount +2
+        end
+    end
+
+    return amount
+end
+
+local function prepareRsConf(task, allRetainsExisting)
+    local tmpRsConf = rsnapshotConf
+    local amount = getSnapshotAmount(task, allRetainsExisting)
+
+    tmpRsConf = tmpRsConf .. "snapshot_root\t" .. task.snapshotPath .. "\nretain\t" .. task.name .. "\t" .. amount .. "\n"
+
+    return tmpRsConf
+end
+
+local function inherit(task, tmpRsConf, internalData)
+    -- pre exec
+    -- human error check
+    if task.getFrom ~= nil then
+        if task.getFrom ~= nil or true then --necessary?
+            if task.remotePath ~= nil or task.remotePathList ~= nil then
+                print("[WARNING]: 'getFrom' is set in the task ’" .. task.name .. "’. 'remotePath' as well as 'remotePathList’ will be ignored!")
+
+                task.remotePathList = nil
+            end
+            if task.snapshotPath ~= nil then
+                print("[WARNING]: 'getFrom' is set in the task ’" .. task.name .. "’. 'snapshotPath' will be ignored. 'snapshotPath' from the '" .. task.getFrom .. "' task will be used instead")
+            end
+        end
+        if conf[task.getFrom] == nil then 
+            io.stderr:write("[ERROR]: Task '" .. task.name .. "’ tries to getFrom '" .. task.getFrom .. "'. but '" .. task.getFrom .. "' is not defined in '" .. args.confFile .. "'\n")
+            return false
+        end
+        if task.getFrom == task.name then 
+            io.stderr:write("[ERROR]: Task '" .. task.name .. "’ tries to getFrom itself. Thats not a legal option\n")
+            return false
+        end
+    end
+    if internalData and internalData.taskList and internalData.taskList[task.name] then
+        io.stderr:write("[ERROR]: getFrom loop. Cant process task '" .. taskList.firstTask .. "'!\n")
+        return false
+    end
+    -- exec
+    local motherTask = getTask(task.getFrom)
+
+    if internalData == nil then
+        internalData = {
+            taskList = {
+                firstTask = task.name,
+            },
+            originalTask = task.name,
+        }
+    end
+    internalData.taskList[task.name] = true
+
+    if task.getFrom ~= nil then
+        _, tmpRsConf = inherit(motherTask, nil, internalData)
+        if tmpRsConf == false then
+            return false
+        end
+    else
+        internalData.motherTask = task
+    end
+
+    if task.getFrom == nil then
+        tmpRsConf = prepareRsConf(task, true)
+    else    
+        local amount = getSnapshotAmount(task, true, internalData.motherTask.snapshotPath)
+        if task.name == internalData.originalTask then
+            amount = amount +1
+        end
+        print(task.name, amount)
+
+        tmpRsConf = tmpRsConf .. "retain\t" .. task.name .. "\t" .. amount .. "\n"
+    end
+
+    return true, tmpRsConf, internalData.motherTask
+end
+
 --===== pre execution =====--
 if lfs.attributes(tmpConfPath) == nil then
     exec("mkdir -p " .. tmpConfPath)
@@ -87,33 +206,32 @@ end
 
 --===== start executing tasks =====--
 for _, taskName in ipairs(args.tasks) do
-    if conf[taskName] ~= nil then
-        local task = conf[taskName]
-        local tmpRsConf = rsnapshotConf
+    if getTask(taskName) ~= nil then
+        local task = getTask(taskName)
         local tmpRsConfFile = io.open(tmpConfPath .. taskName, "w")
-        local amount = task.amount
+        local tmpRsConf
 
-        if tostring(amount) == "-1" then 
-            amount = 0
-            if lfs.attributes(task.snapshotPath) == nil then
-                exec("mkdir -p " .. task.snapshotPath)
-            end
-            for fileName in lfs.dir(task.snapshotPath) do
-                local ending
-                for s in string.gmatch(fileName, "[^.]+") do
-                    ending = s
-                end
+        if task.getFrom == nil then
+            tmpRsConf = prepareRsConf(task, false)
+        else
+            local suc, trsc, motherTask = inherit(task)
+            tmpRsConf = trsc
+            local newTask = {}
 
-                if ending ~= nil and string.sub(fileName, 0, -(string.len(ending) +2)) == taskName then
-                    if tonumber(ending) > amount then
-                        amount = tonumber(ending)
-                    end
-                end
+            for i, c in pairs(task) do
+                newTask[i] = c
             end
-            amount = amount +2
+
+            task = newTask
+            task.snapshotPath = motherTask.snapshotPath
+            task.remotePath = motherTask.remotePath
+            task.remotePathList = motherTask.remotePathList
+
+            if suc == false then
+                goto post_exec
+            end
         end
 
-        tmpRsConf = tmpRsConf .. "snapshot_root\t" .. task.snapshotPath .. "\nretain\t" .. taskName .. "\t" .. amount .. "\n"
 
         if task.remotePath ~= nil then
             tmpRsConf = tmpRsConf ..  "backup\t" .. task.remotePath .. rsConfBackupEnding(task.remotePath)
@@ -130,12 +248,15 @@ for _, taskName in ipairs(args.tasks) do
 
         if exec("rsnapshot -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
             exec("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifeTime .. " -exec rm -r {} \\;", "find")
-
-            exec("rm " .. tmpConfPath .. taskName, "rm")
+            
+            if args.keepTmpRsConfFiles ~= true then
+                exec("rm " .. tmpConfPath .. taskName, "rm")
+            end
         end
 
+        ::post_exec::
     else
-        io.stderr:write("[ERROR]: Cant find task \"" .. taskName .. "\" in \"" .. args.confFile .. "\"\n")
+        io.stderr:write("[ERROR]: Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
     end
 end
 
