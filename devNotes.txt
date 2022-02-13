@@ -1,0 +1,5 @@
+backup levels:
+	an inherit option where u can define a task to inheritance from.
+	ltrs will then generate the conf for the mother task and add additional retain entries to it. 
+	that way you can have that daily, weekly, monthy like rsnapshot behavor without manually copying the files.
+	genius!
