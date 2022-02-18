@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.7"
+local version = "v0.7.1"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -323,7 +323,8 @@ for _, taskName in ipairs(args.tasks) do
         log.err("Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
     end
 end
-if not hasExecutetTasks and args.rsArgs ~= nil then
+
+if not hasExecutetTasks and string.len(args.rsArgs) > 0 then
     exec("rsnapshot " .. args.rsArgs)
 end
 
