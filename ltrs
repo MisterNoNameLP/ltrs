@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.6"
+local version = "v0.7"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -10,6 +10,15 @@ local argparse = require("argparse")
 local lfs = require("lfs")
 
 local conf = lip.load("ltrs.ini")
+
+--===== vars =====--
+local tmpConfPath = "./tmp/conf"
+
+local rsnapshotConf
+local conf, logfile
+local log = {}
+
+local fullArgList = ""
 
 --===== parse args =====--
 local args
@@ -24,39 +33,15 @@ do
     end)
 
     parser:flag("-k --keep", "Keep the auto generatet temporary rsnapshot conf files."):target("keepTmpRsConfFiles")
+    parser:flag("-v --verbose", "Prints out what it is doing."):target("verbose")
 
     parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
     parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
-    parser:option("-a --args", "Gives following args to rsnapshot."):target("rsArgs")
+    parser:option("-a --args", "Gives following args to rsnapshot.", ""):target("rsArgs")
+    parser:option("-l --log", "Specify a custon logfile."):target("logfile")
 
     args = parser:parse()
 end
-
---===== load configs =====--
-local tmpConfPath = "./tmp/"
-
-local rsnapshotConf
-local conf 
-
-if lfs.attributes(args.rsConfFile) == nil then
-    io.stderr:write("[FATAL]: Cant find rsnapshot config file\n")
-    os.exit(1)
-else
-    rsnapshotConf = ut.readFile("rsnapshot.conf")
-end
-
-if lfs.attributes(args.confFile) == nil then
-    io.stderr:write("[FATAL]: Cant find ltrs config file\n")
-    os.exit(1)
-else
-    conf = lip.load(args.confFile)
-end
-
--- debug
---print(ut.tostring(args))
---print(ut.tostring(conf))
-
---do return true end
 
 --===== functions =====--
 local function exec(task, name)
@@ -65,7 +50,7 @@ local function exec(task, name)
     name = ut.parseArgs(name, "exec")
 
     if suc ~= 0 then
-        io.stderr:write("[ERROR]: " .. name .. ": returned an error: " .. tostring(suc) .. "\n")
+        log.err(name .. ": returned an error: " .. tostring(suc) .. "\n")
         
         return false, suc
     end
@@ -151,16 +136,16 @@ local function inherit(task, tmpRsConf, internalData)
             end
         end
         if conf[task.getFrom] == nil then 
-            io.stderr:write("[ERROR]: Task '" .. task.name .. "’ tries to getFrom '" .. task.getFrom .. "'. but '" .. task.getFrom .. "' is not defined in '" .. args.confFile .. "'\n")
+            log.err("Task '" .. task.name .. "’ tries to getFrom '" .. task.getFrom .. "'. but '" .. task.getFrom .. "' is not defined in '" .. args.confFile .. "'\n")
             return false
         end
         if task.getFrom == task.name then 
-            io.stderr:write("[ERROR]: Task '" .. task.name .. "’ tries to getFrom itself. Thats not a legal option\n")
+            log.err("Task '" .. task.name .. "’ tries to getFrom itself. Thats not a legal option\n")
             return false
         end
     end
     if internalData and internalData.taskList and internalData.taskList[task.name] then
-        io.stderr:write("[ERROR]: getFrom loop. Cant process task '" .. taskList.firstTask .. "'!\n")
+        log.err("getFrom loop. Cant process task '" .. taskList.firstTask .. "'!\n")
         return false
     end
     -- exec
@@ -192,7 +177,6 @@ local function inherit(task, tmpRsConf, internalData)
         if task.name == internalData.originalTask then
             amount = amount +1
         end
-        print(task.name, amount)
 
         tmpRsConf = tmpRsConf .. "retain\t" .. task.name .. "\t" .. amount .. "\n"
     end
@@ -200,12 +184,84 @@ local function inherit(task, tmpRsConf, internalData)
     return true, tmpRsConf, internalData.motherTask
 end
 
+local function getTime()
+    return "[" .. os.date("%Y-%m-%d %H:%M") .. "]"
+end
+
+function log.logwrite(...)
+    if logfile ~= nil and logfile.write ~= nil then
+        logfile:write(getTime(), ...)
+        logfile:flush()
+    else
+        io.stderr:write(getTime() .. "[ERROR]: Can't write to logfile!\n")
+    end
+end
+
+function log.write(...)
+    log.logwrite("[INFO]: ", ..., "\n")
+    if args.verbose then
+        io.write(getTime(), "[INFO]: ", ..., "\n")
+    end
+end
+
+function log.err(...)
+    log.logwrite("[ERROR]: ", ..., "\n")
+    io.stderr:write(getTime(), "[ERROR]: ", ..., "\n")
+end
+
+function log.fatal(...)
+    log.logwrite("[FATAL]: ", ..., "\n")
+    io.stderr:write(getTime(), "[FATAL]: ", ..., "\n")
+    os.exit(1)
+end
+
 --===== pre execution =====--
+do -- load configs and open logfile
+    if lfs.attributes(args.confFile) == nil then
+        log.fatal("Cant find ltrs config file\n")
+    else
+        conf = lip.load(args.confFile)
+    end
+
+    do --open logfile
+        local path = ut.seperatePath(conf.ltrs.logfile)
+        if lfs.attributes(path) == nil then
+            if exec("mkdir -p " .. path) == false then
+                log.err("Can't create lofgile path:'" .. path .. "'!\n")
+            end
+        end
+    
+        local localLogfile, err = io.open(conf.ltrs.logfile, "w+")
+    
+        if localLogfile == nil then
+            log.err("Can't open logfile '" .. conf.ltrs.logfile .. "'!\n\t" .. tostring(err) .. "\n")
+        else
+            logfile = localLogfile
+        end
+    end
+
+    if lfs.attributes(args.rsConfFile) == nil then
+        log.fatal("Cant find rsnapshot config file\n")
+    else
+        rsnapshotConf = ut.readFile("rsnapshot.conf")
+    end
+
+    if args.logfile ~= nil then
+        conf.ltrs.logfile = args.logfile
+    end
+end
+
+-- create tmp dir of not existing.
 if lfs.attributes(tmpConfPath) == nil then
     exec("mkdir -p " .. tmpConfPath)
 end
 
 --===== start executing tasks =====--
+for _, s in ipairs({...}) do
+    fullArgList = fullArgList .. s .. " "
+end
+log.write("Start executing ltrs with following arguments:\n\t'" .. fullArgList .. "'")
+
 local hasExecutetTasks = false
 for _, taskName in ipairs(args.tasks) do
     hasExecutetTasks = true
@@ -213,6 +269,8 @@ for _, taskName in ipairs(args.tasks) do
         local task = getTask(taskName)
         local tmpRsConfFile = io.open(tmpConfPath .. taskName, "w")
         local tmpRsConf
+
+        log.write("Execute task: " .. taskName)
 
         if task.getFrom == nil then
             tmpRsConf = prepareRsConf(task, false)
@@ -235,7 +293,6 @@ for _, taskName in ipairs(args.tasks) do
             end
         end
 
-
         if task.remotePath ~= nil then
             tmpRsConf = tmpRsConf ..  "backup\t" .. task.remotePath .. rsConfBackupEnding(task.remotePath)
         end
@@ -250,7 +307,11 @@ for _, taskName in ipairs(args.tasks) do
         tmpRsConfFile:close()
 
         if exec("rsnapshot " .. args.rsArgs .. " -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
-            exec("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifeTime .. " -exec rm -r {} \\;", "find")
+            for path in io.popen("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifetime):lines() do
+                local _, fileName, ending = ut.seperatePath(path)
+                log.write("Delete old snapshot: " .. fileName .. ending)
+                exec("rm -r " .. path, "rm")
+            end
             
             if args.keepTmpRsConfFiles ~= true then
                 exec("rm " .. tmpConfPath .. taskName, "rm")
@@ -259,9 +320,41 @@ for _, taskName in ipairs(args.tasks) do
 
         ::post_exec::
     else
-        io.stderr:write("[ERROR]: Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
+        log.err("Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
     end
 end
 if not hasExecutetTasks and args.rsArgs ~= nil then
     exec("rsnapshot " .. args.rsArgs)
 end
+
+--===== post exec =====--
+log.write("Task execution is done")
+
+do -- cleanup logs
+    local path, fileName, ending = ut.seperatePath(conf.ltrs.logfile)
+    local currentTime = os.date("%Y%m%d%H%M")
+    local newFileName = fileName .. "-" .. currentTime .. ending or ""
+    local logfilePath = ut.seperatePath(conf.ltrs.logfile)
+
+    log.write("Cleanup logfiles")
+
+    -- delete old logfiles
+    for path in io.popen("find " .. logfilePath .. "/* -maxdepth 1 -mtime +" .. conf.ltrs.logfileLifetime):lines() do
+        local _, fileName, ending = ut.seperatePath(path)
+        log.write("Delete old logfile: " .. fileName .. ending)
+        exec("rm -r " .. path, "rm")
+    end
+
+    logfile:close()
+
+    if lfs.attributes(conf.ltrs.logfile) ~= nil then
+        local sameLogfileNames = 1
+        while lfs.attributes(path .. "/" .. newFileName) ~= nil do
+            newFileName = fileName .. "-" .. currentTime .. "_" .. tostring(sameLogfileNames) .. ending or ""
+            sameLogfileNames = sameLogfileNames +1
+        end
+
+        exec("cp " .. conf.ltrs.logfile .. " " .. path .. "/" .. newFileName, "cp")
+    end
+end
+

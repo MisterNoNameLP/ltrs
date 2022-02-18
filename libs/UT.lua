@@ -18,7 +18,11 @@
 --[[UsefullThings libary
 	
 ]]
-local UT = {version = "v0.8"}
+local UT = {version = "v0.8.1"}
+
+function UT.getVersion()
+	return UT.version
+end
 
 function UT.parseArgs(...) --returns the first non nil parameter.
 	for _, a in pairs({...}) do

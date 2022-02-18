@@ -1,5 +1,15 @@
 # example ltrs config file
 
+# ltrs specific config
+[ltrs]
+
+# the logfile path / name
+logfile=./logs/ltrs.log
+
+# the time logfiles are stored in days.
+logfileLifetime=3
+
+
 # task name
 [example]
 
