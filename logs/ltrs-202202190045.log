@@ -1,6 +1,0 @@
-[2022-02-19 00:45][INFO]: Start executing ltrs with following arguments:
-	''
-[2022-02-19 00:45][ERROR]: exec: returned an error: 1
-
-[2022-02-19 00:45][INFO]: Task execution is done
-[2022-02-19 00:45][INFO]: Cleanup logfiles
