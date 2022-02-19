@@ -9,6 +9,9 @@ logfile=./logs/ltrs.log
 # the time logfiles are stored in days.
 logfileLifetime=3
 
+# will be executet is some error message gets outputet. The error message gets parsed to the onError scipt.
+onError=./onError.sh
+
 
 # task name
 [example]

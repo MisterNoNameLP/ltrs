@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.7.1"
+local version = "v0.8"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -13,6 +13,7 @@ local conf = lip.load("ltrs.ini")
 
 --===== vars =====--
 local tmpConfPath = "./tmp/conf"
+local tmpExecOutput, tmpExecErrorOutput = "./tmp/exec_output", "./tmp/exec_error_output"
 
 local rsnapshotConf
 local conf, logfile
@@ -34,23 +35,47 @@ do
 
     parser:flag("-k --keep", "Keep the auto generatet temporary rsnapshot conf files."):target("keepTmpRsConfFiles")
     parser:flag("-v --verbose", "Prints out what it is doing."):target("verbose")
+    parser:flag("-E --simulate-error", "Simulates an error and exits the program."):target("simulateError")
 
     parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
     parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
     parser:option("-a --args", "Gives following args to rsnapshot.", ""):target("rsArgs")
     parser:option("-l --log", "Specify a custon logfile."):target("logfile")
+    parser:option("-e --error", "Specify a custon onError script."):target("onError")
 
     args = parser:parse()
 end
 
 --===== functions =====--
-local function exec(task, name)
-    local suc = select(3, os.execute(task))
+local function exec(task, name, printErrorMsg)
+    local suc, output, errOutput
+
+    if args.verbose then
+        log.write("[EXEC]: " .. task)
+    end
+    
+    suc = select(3, os.execute(task .. " > " .. tmpExecOutput .. " 2> " .. tmpExecErrorOutput))
+
+    if args.verbose then
+        output = ut.readFile(tmpExecOutput)
+        if string.len(output) > 0 then
+            log.logwrite(output)
+        end
+    end
+
+    errOutput = ut.readFile(tmpExecErrorOutput)
+    
+    if string.len(errOutput) > 0 then
+        log.warn("[EXEC]: An error seems to have occured by executing: " .. name .. " ('" .. task .. "')\n" .. errOutput)
+    end
 
     name = ut.parseArgs(name, "exec")
-
     if suc ~= 0 then
-        log.err(name .. ": returned an error: " .. tostring(suc) .. "\n")
+        if printErrorMsg ~= false then
+            log.err("[EXEC]: " .. name .. ": returned an error: " .. tostring(suc) .. "\n")
+        else
+            log.warn("[EXEC]: " .. name .. ": returned an error: " .. tostring(suc) .. "\n")
+        end
         
         return false, suc
     end
@@ -188,6 +213,18 @@ local function getTime()
     return "[" .. os.date("%Y-%m-%d %H:%M") .. "]"
 end
 
+local function onError(...)
+    local msg = ""
+
+    for _, s in ipairs({...}) do
+        msg = msg .. s
+    end
+
+    if conf.ltrs.onError ~= nil then
+        os.execute(conf.ltrs.onError .. " " .. msg)
+    end
+end
+
 function log.logwrite(...)
     if logfile ~= nil and logfile.write ~= nil then
         logfile:write(getTime(), ...)
@@ -199,20 +236,25 @@ end
 
 function log.write(...)
     log.logwrite("[INFO]: ", ..., "\n")
-    if args.verbose then
-        io.write(getTime(), "[INFO]: ", ..., "\n")
-    end
+    io.write(getTime(), "[INFO]: ", ..., "\n")
+end
+
+function log.warn(...)
+    log.logwrite("[WARN]: ", ..., "\n")
+    io.write(getTime(), "[WARN]: ", ..., "\n")
 end
 
 function log.err(...)
     log.logwrite("[ERROR]: ", ..., "\n")
     io.stderr:write(getTime(), "[ERROR]: ", ..., "\n")
+    onError(getTime(), "[ERROR]: ", ...)
 end
 
 function log.fatal(...)
     log.logwrite("[FATAL]: ", ..., "\n")
     io.stderr:write(getTime(), "[FATAL]: ", ..., "\n")
     os.exit(1)
+    onError(getTime(), "[FATAL]: ", ...)
 end
 
 --===== pre execution =====--
@@ -249,11 +291,28 @@ do -- load configs and open logfile
     if args.logfile ~= nil then
         conf.ltrs.logfile = args.logfile
     end
+    do
+        local onErrorFile
+        
+        if args.onError ~= nil then
+            conf.ltrs.onError = args.onError
+        end
+
+        if lfs.attributes(conf.ltrs.onError) == nil then
+            log.warn("onError file is not existing.")
+        end
+    end
 end
 
 -- create tmp dir of not existing.
 if lfs.attributes(tmpConfPath) == nil then
     exec("mkdir -p " .. tmpConfPath)
+end
+
+--simulate error
+if args.simulateError then
+    log.err("Simulatet error")
+    os.exit(1)
 end
 
 --===== start executing tasks =====--
@@ -267,8 +326,13 @@ for _, taskName in ipairs(args.tasks) do
     hasExecutetTasks = true
     if getTask(taskName) ~= nil then
         local task = getTask(taskName)
-        local tmpRsConfFile = io.open(tmpConfPath .. taskName, "w")
+        local tmpRsConfFile = io.open(tmpConfPath .. "/" .. taskName, "w")
         local tmpRsConf
+
+        if string.find(task.name, "%.") ~= nil then
+            log.err("Task '" .. task.name .. "' has a dot (.) inside. Thats not a legal task name. The task will be ignored")
+            goto post_task_exec
+        end
 
         log.write("Execute task: " .. taskName)
 
@@ -289,7 +353,7 @@ for _, taskName in ipairs(args.tasks) do
             task.remotePathList = motherTask.remotePathList
 
             if suc == false then
-                goto post_exec
+                goto post_task_exec
             end
         end
 
@@ -306,19 +370,21 @@ for _, taskName in ipairs(args.tasks) do
         tmpRsConfFile:write(tmpRsConf)
         tmpRsConfFile:close()
 
-        if exec("rsnapshot " .. args.rsArgs .. " -c " .. tmpConfPath .. taskName .. " " .. taskName, "rsnapshot") then
-            for path in io.popen("find " .. task.snapshotPath .. " -maxdepth 1 -mtime +" .. task.lifetime):lines() do
+        if exec("rsnapshot " .. args.rsArgs .. " -c " .. tmpConfPath .. "/" .. taskName .. " " .. taskName, "rsnapshot", false) then
+            for path in io.popen("find " .. task.snapshotPath .. " -maxdepth 1 -name '" .. task.name .. ".*' -mtime +" .. task.lifetime):lines() do
                 local _, fileName, ending = ut.seperatePath(path)
                 log.write("Delete old snapshot: " .. fileName .. ending)
                 exec("rm -r " .. path, "rm")
             end
             
             if args.keepTmpRsConfFiles ~= true then
-                exec("rm " .. tmpConfPath .. taskName, "rm")
+                exec("rm " .. tmpConfPath .. "/" .. taskName, "rm")
             end
+        else
+            log.err("Could not create backup for task: " .. task.name .. "!")
         end
 
-        ::post_exec::
+        ::post_task_exec::
     else
         log.err("Task '" .. taskName .. "' is not defined in '" .. args.confFile .. "'\n")
     end
@@ -346,8 +412,6 @@ do -- cleanup logs
         exec("rm -r " .. path, "rm")
     end
 
-    logfile:close()
-
     if lfs.attributes(conf.ltrs.logfile) ~= nil then
         local sameLogfileNames = 1
         while lfs.attributes(path .. "/" .. newFileName) ~= nil do
@@ -357,5 +421,7 @@ do -- cleanup logs
 
         exec("cp " .. conf.ltrs.logfile .. " " .. path .. "/" .. newFileName, "cp")
     end
+
+    logfile:close()
 end
 
