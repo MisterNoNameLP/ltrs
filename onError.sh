@@ -4,3 +4,5 @@ echo ======
 echo Something went wrong!
 #echo $@
 echo ======
+
+echo $@ >> logs/ltrs.err

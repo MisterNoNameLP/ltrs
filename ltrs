@@ -1,5 +1,5 @@
 #!/bin/lua
-local version = "v0.8.1"
+local version = "v0.8.2"
 
 --===== load libs =====--
 package.path = "libs/?.lua;" .. package.path
@@ -38,12 +38,16 @@ do
     parser:flag("-E --simulate-error", "Simulates an error and exits the program."):target("simulateError")
 
     parser:option("-c --conf", "Alternative ltrs config file.", "ltrs.ini"):target("confFile")
-    parser:option("-s --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
-    parser:option("-a --args", "Gives following args to rsnapshot.", ""):target("rsArgs")
+    parser:option("-C --rsconf", "Alternative rsnapshot config file.", "rsnapshot.conf"):target("rsConfFile")
+    parser:option("-a --args", "Gives following args to rsnapshot."):target("rsArgs")
     parser:option("-l --log", "Specify a custon logfile."):target("logfile")
-    parser:option("-e --error", "Specify a custon onError script."):target("onError")
+    parser:option("-e --on-error", "Specify a custon onError script."):target("onError")
 
     args = parser:parse()
+
+    if args.rsArgs == nil then --crash prevention
+        args.rsArgs = ""
+    end
 end
 
 --===== functions =====--
