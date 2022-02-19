@@ -31,3 +31,19 @@ lifeTime=99999
 
 # the maximum amount of snapshots to keep. -1 = infinit amount.
 amount=-1
+
+
+# second backup level
+[example2]
+
+# backup level to copy snapshots from.
+getFrom=example
+
+# the full path where to put the snapshots in.
+snapshotPath=/FULL/SNAPSHOT/PATH
+
+# the life time of the snapshots in days.
+lifeTime=99999
+
+# the maximum amount of snapshots to keep. -1 = infinit amount.
+amount=-1
