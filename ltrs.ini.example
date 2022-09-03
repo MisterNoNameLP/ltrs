@@ -27,7 +27,7 @@ remotePathList=remote.list
 snapshotPath=/FULL/SNAPSHOT/PATH
 
 # the life time of the snapshots in days.
-lifeTime=99999
+lifetime=99999
 
 # the maximum amount of snapshots to keep. -1 = infinit amount.
 amount=-1
@@ -43,7 +43,7 @@ getFrom=example
 snapshotPath=/FULL/SNAPSHOT/PATH
 
 # the life time of the snapshots in days.
-lifeTime=99999
+lifetime=99999
 
 # the maximum amount of snapshots to keep. -1 = infinit amount.
 amount=-1
